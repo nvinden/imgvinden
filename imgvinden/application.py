@@ -117,7 +117,26 @@ class ImageVinden(QPixmap):
 
         self.use_np_image(rotated, save_name="rotate")
 
+    def scale(self, scale_factor : float):
+        image = self.image_to_np()
 
+        height, width, _ = image.shape
+
+        out_image = np.zeros(shape = [int(height * scale_factor) + 50, int(width * scale_factor) + 50, 3], dtype = np.uint8)
+
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                x = float(x)
+                y = float(y)
+                # TODO: Implement bilear interpolation
+                x_prime = int(max(0, min(out_image.shape[0] - 1, x * scale_factor)))
+                y_prime = int(max(0, min(out_image.shape[1] - 1, y * scale_factor)))
+
+                print(x_prime, y_prime)
+
+                out_image[x_prime, y_prime, :] = image[int(x), int(y), :]
+
+        self.use_np_image(out_image, save_name = "scale")
 
 class ImgVindenGUI(QMainWindow):
     def __init__(self):
@@ -226,11 +245,9 @@ class ImgVindenGUI(QMainWindow):
                 msg.setText(f"Error no file found named \"{file_name}\"")
                 msg.exec_()
 
-    
     @pyqtSlot()
     def crop_action(self):
         print("crop_action")
-
 
     @pyqtSlot()
     def flip_action(self):
@@ -253,6 +270,18 @@ class ImgVindenGUI(QMainWindow):
     @pyqtSlot()
     def scale_action(self):
         print("scale_action")
+
+        scale_factor, ok = QInputDialog.getText(self, 'Scale Factor', 'By what scale factor would you like to scale the image? (ex. 2.0)')
+        if ok:
+            try:
+                scale_factor = float(scale_factor)
+                self.output_pixmap.scale(scale_factor)
+                self.output_label.setPixmap(self.output_pixmap)
+            except ValueError:
+                msg = QMessageBox()
+                msg.setText(f"Error not a valid rotation amount")
+                msg.exec_()
+
     
     @pyqtSlot()
     def LGLM_action(self):
