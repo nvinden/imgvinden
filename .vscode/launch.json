@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/launch.py",
             "console": "integratedTerminal",
-            "justMyCode": false
+            "justMyCode": true
         }
     ]
 }

@@ -1,8 +1,9 @@
 import sys
 import os
 import math
+from copy import deepcopy, copy
 
-from .dialogues import *
+from .dialogues import CropDialog, ConvolutionDialog, NLFDialog, HistogramDialog
 from .utils import get_random_string
 
 import PyQt5
@@ -33,6 +34,8 @@ class ImageVinden(QPixmap):
 
         self.image_save_counter = 0
 
+        #self.convolution(np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype = np.int32))
+
     def load_new_image(self, fileName : str):
         self.original_image_path = fileName
         self.load(fileName=fileName)
@@ -57,6 +60,23 @@ class ImageVinden(QPixmap):
         self.image_save_counter += 1
 
         self.load(image_path)
+
+    def crop(self, x_range : tuple[float, float], y_range : tuple[float, float]):
+        image = self.image_to_np()
+
+        x_values_range = range(int(x_range[0] * image.shape[0]), int(x_range[1] * image.shape[0]))
+        y_values_range = range(int(y_range[0] * image.shape[1]), int(y_range[1] * image.shape[1]))
+
+        out_image = np.zeros(shape = [len(list(x_values_range)), len(list(y_values_range)), 3], dtype = np.uint8)
+
+        crop_shift_x = list(x_values_range)[0]
+        crop_shift_y = list(y_values_range)[0]
+
+        for x in x_values_range:
+            for y in y_values_range:
+                out_image[x - crop_shift_x, y - crop_shift_y, :] = image[x, y, :]
+
+        self.use_np_image(out_image, save_name="crop")
 
     def flip(self, flip_direction : str):
         assert flip_direction in ["horizontal", "vertical"]
@@ -93,27 +113,37 @@ class ImageVinden(QPixmap):
         tr = rotate_point(0, width - 1, alpha = rotation_rad)
         br = rotate_point(height - 1, width - 1, alpha = rotation_rad)
 
-        x_min = min(tl[0], bl[0], tr[0], br[0])
-        x_max = max(tl[0], bl[0], tr[0], br[0])
+        x_min = int(min(tl[0], bl[0], tr[0], br[0]))
+        x_max = int(max(tl[0], bl[0], tr[0], br[0]))
 
-        y_min = min(tl[1], bl[1], tr[1], br[1])
-        y_max = max(tl[1], bl[1], tr[1], br[1])
+        y_min = int(min(tl[1], bl[1], tr[1], br[1]))
+        y_max = int(max(tl[1], bl[1], tr[1], br[1]))
 
         x_range = int(x_max - x_min) + 1
         y_range = int(y_max - y_min) + 1
 
-        rotated = np.zeros(shape = [x_range + 4, y_range + 4, 3], dtype=np.uint8)
+        rotated = np.zeros(shape = [x_range, y_range, 3], dtype=np.uint8)
+        
+        x_translation = 0
+        y_translation = 0
 
         # TODO add bilinear interpolation?? Might be fun
 
-        for x in range(height):
-            for y in range(width):
-                x_prime, y_prime = rotate_point(x, y, alpha = rotation_rad)
+        for x in range(x_range):
+            for y in range(y_range):
+                x_prime, y_prime = rotate_point(x + x_min, y + y_min, alpha = - rotation_rad)
 
-                x_prime = int(x_prime + 0.5) - int(x_min) + 2
-                y_prime = int(y_prime + 0.5) - int(y_min) + 2
+                if x_prime >= height or x_prime < 0:
+                    rotated[x, y, :] = 0
+                    continue
+                if y_prime >= width or y_prime < 0:
+                    rotated[x, y, :] = 0
+                    continue
 
-                rotated[x_prime, y_prime, :] = image[x, y, :]
+                x_prime = int(max(0, min(x_prime + 0.5, image.shape[0] - 1)))
+                y_prime = int(max(0, min(y_prime + 0.5, image.shape[1] - 1)))
+
+                rotated[x, y, :] = image[x_prime, y_prime, :]
 
         self.use_np_image(rotated, save_name="rotate")
 
@@ -122,21 +152,148 @@ class ImageVinden(QPixmap):
 
         height, width, _ = image.shape
 
-        out_image = np.zeros(shape = [int(height * scale_factor) + 50, int(width * scale_factor) + 50, 3], dtype = np.uint8)
+        out_image = np.zeros(shape = [int(height * scale_factor) + 1, int(width * scale_factor) + 1, 3], dtype = np.uint8)
+
+        for x in range(out_image.shape[0]):
+            for y in range(out_image.shape[1]):
+                x_1 = int(float(x) / scale_factor)
+                x_2 = x_1 + 1
+
+                y_1 = int(float(y) / scale_factor)
+                y_2 = y_1 + 1
+
+                x_t = x / scale_factor
+                y_t = y / scale_factor
+
+                # Border cases:
+                if x_2 >= image.shape[0] and y_2 >= image.shape[1]:
+                    out_image[x, y] = image[image.shape[0] - 1 , image.shape[1] - 1, :]
+                    continue
+                elif x_2 >= image.shape[0]:
+                    out_image[x, y] = image[image.shape[0] - 1 , y_1, :]
+                    continue
+                elif y_2 >= image.shape[1]:
+                    out_image[x, y] = image[x_1 , image.shape[1] - 1, :]
+                    continue
+
+                q_11 = image[x_1, y_1, :]
+                q_12 = image[x_1, y_2, :]
+                q_21 = image[x_2, y_1, :]
+                q_22 = image[x_2, y_2, :]
+
+                # Actual bilinear interpolation
+                r_1 = q_11 * (x_2 - x_t) + q_21 * (x_t - x_1)
+                r_2 = q_12 * (x_2 - x_t) + q_22 * (x_t - x_1)
+                p =   r_1  * (y_2 - y_t) + r_2  * (y_t - y_1)
+
+                out_image[x, y, :] = p.astype(np.uint8)
+
+        self.use_np_image(out_image, save_name = "scale")
+
+    def PLGLM(self, gamma : float):
+        image = self.image_to_np()
+
+        def gamma_transformation(u):
+            return (np.power(u / 255, gamma) * 255).astype(np.uint8)
+
+        out_image = np.zeros_like(image, dtype = np.uint8)
 
         for x in range(image.shape[0]):
             for y in range(image.shape[1]):
-                x = float(x)
-                y = float(y)
-                # TODO: Implement bilear interpolation
-                x_prime = int(max(0, min(out_image.shape[0] - 1, x * scale_factor)))
-                y_prime = int(max(0, min(out_image.shape[1] - 1, y * scale_factor)))
+                out_image[x, y, :] = gamma_transformation(image[x, y, :])
+        
+        self.use_np_image(out_image, save_name = "PLGLM")
 
-                print(x_prime, y_prime)
+    def LGLM(self, gain : float, bias : float):
+        image = self.image_to_np()
 
-                out_image[x_prime, y_prime, :] = image[int(x), int(y), :]
+        def gamma_transformation(u):
+            return np.clip(gain * u + bias, 0, 255).astype(np.uint8)
 
-        self.use_np_image(out_image, save_name = "scale")
+        out_image = np.zeros_like(image, dtype = np.uint8)
+
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                out_image[x, y, :] = gamma_transformation(image[x, y, :])
+        
+        self.use_np_image(out_image, save_name = "LGLM")
+
+    def convolution(self, kernel : np.ndarray):
+        image = self.image_to_np()
+
+        out_image = np.zeros_like(image, dtype = np.int32)
+
+        x_mid_conv = int((kernel.shape[0] - 1) / 2)
+        y_mid_conv = int((kernel.shape[1] - 1) / 2)
+
+        padded_image = np.pad(image, pad_width = [(x_mid_conv, ), (y_mid_conv, ), (0, )], mode='constant', constant_values=0)
+        padded_image = padded_image[:, :, :3]
+
+        kernel_t = np.flip(np.flip(kernel, 0), 1)
+        kernel_t = np.stack((kernel_t, kernel_t, kernel_t), axis = 2)
+
+        for x in range(x_mid_conv, image.shape[0] + x_mid_conv):
+            for y in range(y_mid_conv, image.shape[1] + y_mid_conv):
+                image_patch = padded_image[x - x_mid_conv : x + x_mid_conv + 1, y - y_mid_conv : y + y_mid_conv + 1, :]
+                result = np.sum(np.multiply(kernel_t, image_patch), axis = (0, 1))
+                out_image[x - x_mid_conv, y - y_mid_conv, :] = result
+
+        # Normalzing the image
+        img_max = np.max(out_image)
+        img_min = np.min(out_image)
+        out_image = np.asarray(255 * (out_image - img_min) / (img_max - img_min), dtype = np.uint8)
+
+        self.use_np_image(out_image, save_name = "Convolution")
+
+    def NLF(self, filter_type : str):
+        assert filter_type in ["Minimum", "Median", "Maximum"]    
+
+        image = self.image_to_np()
+
+        out_image = np.zeros_like(image, dtype = np.uint8) 
+
+        def in_picture(x, y):
+            return (x >= 0 and x <= image.shape[0] - 1) and (y >= 0 and y <= image.shape[1] - 1)
+            
+        surround_indexes = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1), (0, 0)]
+
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                adjacent_pixels = list()
+
+                for idx in surround_indexes:
+                    if in_picture(x + idx[0], y + idx[1]): adjacent_pixels.append(image[x + idx[0], y + idx[1]])
+
+                adjacent_pixels.sort(key = lambda x: np.mean(x))
+
+                if filter_type == "Minimum":
+                    chosen_pixel = adjacent_pixels[0]
+                elif filter_type == "Median":
+                    if len(adjacent_pixels) % 2 == 1:
+                        chosen_pixel = adjacent_pixels[(len(adjacent_pixels) - 1) // 2]
+                    else:
+                        first_pixel = adjacent_pixels[(len(adjacent_pixels) - 1) // 2]
+                        seond_pixel = adjacent_pixels[(len(adjacent_pixels) + 1) // 2]
+                        chosen_pixel = (first_pixel + seond_pixel) / 2
+                elif filter_type == "Maximum":
+                    chosen_pixel = adjacent_pixels[-1]
+
+                out_image[x, y, :] = chosen_pixel
+
+        self.use_np_image(out_image, save_name = "Convolution")
+
+    def histogram_equalization(self, histogram : list):
+        image = self.image_to_np()
+
+        out_image = np.zeros_like(image, dtype = np.uint8)
+
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                new_col_values = np.array([255 * histogram[val] for val in image[x, y, :]], dtype = np.uint8)
+                #new_col_values = np.array([255 * histogram[int(np.mean(image[x, y]))]] * 3, dtype=np.uint8)
+                out_image[x, y, :] = new_col_values
+
+        self.use_np_image(out_image, save_name = "hist-equalization")
 
 class ImgVindenGUI(QMainWindow):
     def __init__(self):
@@ -172,8 +329,19 @@ class ImgVindenGUI(QMainWindow):
         self.output_label.setAlignment(Qt.AlignCenter)
         self.output_label.setStyleSheet("border: 3px solid black;")
 
+        self.swap_image_button = QPushButton("SWAP", self)
+        self.swap_image_button.clicked.connect(self.swap_image_action)
+        self.swap_image_button.width = 30
+
+        self.image_grid.setColumnStretch(0, 10)
+        self.image_grid.setColumnStretch(1, 1)
+        self.image_grid.setColumnStretch(2, 10)
+
+        self.image_grid.setRowMinimumHeight(0, 750)
+
         self.image_grid.addWidget(self.input_label, 0, 0)
-        self.image_grid.addWidget(self.output_label, 0, 1)
+        self.image_grid.addWidget(self.swap_image_button, 0, 1)
+        self.image_grid.addWidget(self.output_label, 0, 2)
 
         # button grid
         self.button_grid = QGridLayout()
@@ -210,6 +378,14 @@ class ImgVindenGUI(QMainWindow):
         self.rotate_button.clicked.connect(self.rotate_action)
         self.button_grid.addWidget(self.rotate_button, 1, 2)
 
+        self.NLF_button = QPushButton("Non-Linear Filtering", self)
+        self.NLF_button.clicked.connect(self.NLF_action)
+        self.button_grid.addWidget(self.NLF_button, 2, 2)
+
+        self.histogram_button = QPushButton("Histogram", self)
+        self.histogram_button.clicked.connect(self.histogram_action)
+        self.button_grid.addWidget(self.histogram_button, 3, 1)
+
         self.master_grid.addLayout(self.image_grid, 0, 0)
         self.master_grid.addLayout(self.button_grid, 1, 0)
         self.master_grid.setRowStretch(0, 2)
@@ -225,6 +401,16 @@ class ImgVindenGUI(QMainWindow):
     ##################
     # Button Actions #
     ##################
+
+    @pyqtSlot()
+    def swap_image_action(self):
+        print("swap action")
+
+        output_image_path = self.output_pixmap.image_path
+        self.output_pixmap.original_image_path = output_image_path
+        self.output_pixmap.image_path = output_image_path
+        self.input_pixmap = self.output_pixmap
+        self.input_label.setPixmap(self.input_pixmap)
 
     @pyqtSlot()
     def input_image_action(self):
@@ -248,6 +434,35 @@ class ImgVindenGUI(QMainWindow):
     @pyqtSlot()
     def crop_action(self):
         print("crop_action")
+
+        def activate_crop(values):
+            try:
+                x_min = float(values['X_min'])
+                x_max = float(values['X_max'])
+                y_min = float(values['Y_min'])
+                y_max = float(values['Y_max'])
+
+                if x_min > x_max:
+                    raise Exception
+                if y_min > y_max:
+                    raise Exception
+                
+                if x_min < 0.0 or x_max > 1.0:
+                    raise Exception
+                if y_min < 0.0 or y_max > 1.0:
+                    raise Exception
+
+                self.output_pixmap.crop(x_range = (x_min, x_max), y_range = (y_min, y_max))
+                self.output_label.setPixmap(self.output_pixmap)
+
+            except:
+                msg = QMessageBox()
+                msg.setText(f"You entered an illegal crop combination")
+                msg.exec_()
+
+        dg = CropDialog()
+        dg.accepted.connect(activate_crop)
+        dg.exec_()
 
     @pyqtSlot()
     def flip_action(self):
@@ -281,19 +496,86 @@ class ImgVindenGUI(QMainWindow):
                 msg = QMessageBox()
                 msg.setText(f"Error not a valid rotation amount")
                 msg.exec_()
-
-    
+ 
     @pyqtSlot()
     def LGLM_action(self):
         print("LGLM_action")
 
+        gain, ok = QInputDialog.getText(self, 'Linear Gray-Level Mapping', 'What gain number would you like to use? (ex. 2.0)')
+        if ok:
+            try:
+                gain = float(gain) 
+
+                bias, ok = QInputDialog.getText(self, 'Linear Gray-Level Mapping', 'What bias number would you like to use? (ex. 2.0)')
+                if ok:
+                    try:
+                        bias = float(bias)
+
+                        self.output_pixmap.LGLM(gain, bias)
+                        self.output_label.setPixmap(self.output_pixmap)
+                    except ValueError:
+                        msg = QMessageBox()
+                        msg.setText(f"Error not a valid bias")
+                        msg.exec_()
+            except ValueError:
+                msg = QMessageBox()
+                msg.setText(f"Error not a valid gain")
+                msg.exec_()
+
     @pyqtSlot()
     def PLGLM_action(self):
         print("PLGLM_action")
+
+        gamma, ok = QInputDialog.getText(self, 'Power-Law Mapping', 'What gamma number would you like to use? (ex. 2.0)')
+        if ok:
+            try:
+                gamma = float(gamma)
+                self.output_pixmap.PLGLM(gamma)
+                self.output_label.setPixmap(self.output_pixmap)
+            except ValueError:
+                msg = QMessageBox()
+                msg.setText(f"Error not a valid rotation amount")
+                msg.exec_()
     
     @pyqtSlot()
     def convolution_action(self):
         print("convolution_action")
+
+        def activate_conv(values):
+            #try:
+            kernel = list()
+
+            # String to lists
+            rows = values['kernel'].split("\n")
+            for row in rows:
+                kernel.append([int(val) for val in row.split(" ")])
+
+            # Padding out the empty (or shorten) rows
+            max_row_lengths = max([len(row) for row in kernel])
+            for row in kernel:
+                extension = [0] * (max_row_lengths - len(row))
+                row.extend(extension)
+
+            kernel = np.asarray(kernel, dtype=np.int32)
+
+            if kernel.shape[0] % 2 == 0 or kernel.shape[1] % 2 == 0:
+                msg = QMessageBox()
+                msg.setText(f"Error must have an odd number of rows and columns in your kernel")
+                msg.exec_()
+                return
+
+            self.output_pixmap.convolution(kernel)
+            self.output_label.setPixmap(self.output_pixmap)     
+
+            #except ValueError:
+            #    msg = QMessageBox()
+            #    msg.setText(f"Error invalid convolutional kernel")
+            #    msg.exec_()
+
+
+        dg = ConvolutionDialog()
+        dg.accepted.connect(activate_conv)
+        dg.exec_()
 
     @pyqtSlot()
     def rotate_action(self):
@@ -308,12 +590,27 @@ class ImgVindenGUI(QMainWindow):
                 msg.setText(f"Error not a valid rotation amount")
                 msg.exec_()
 
-    #########
-    # Utils #
-    #########
+    @pyqtSlot()
+    def NLF_action(self):
+        print("NLF_action")
 
-    def get_input_image(self):
-        pass
+        def activate_NLF(values):
+            response = values["response"]
+            self.output_pixmap.NLF(response)
+            self.output_label.setPixmap(self.output_pixmap)
 
-    def get_output_image(self):
-        pass
+        dg = NLFDialog()
+        dg.accepted.connect(activate_NLF)
+        dg.exec_()
+
+    @pyqtSlot()
+    def histogram_action(self):
+
+        def activate_hist(values):
+            histogram = values["histogram"]
+            self.output_pixmap.histogram_equalization(histogram)
+            self.output_label.setPixmap(self.output_pixmap)
+
+        dg = HistogramDialog(self.input_pixmap.image_to_np())
+        dg.accepted.connect(activate_hist)
+        dg.exec_()
