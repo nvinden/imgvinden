@@ -36,21 +36,27 @@ class ImageVinden(QPixmap):
 
         #self.convolution(np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype = np.int32))
 
+    # Loading an image
     def load_new_image(self, fileName : str):
         self.original_image_path = fileName
         self.load(fileName=fileName)
 
+    # Loads an image, creating a sub 
     def load(self, fileName : str):
         super().load(fileName)
 
         self.image_path = fileName
+
+        # Creating a subdirectory for all of the augmented images
         self.dir_name = self.image_path.split("/")[3].split(".")[0].split("-K:")[0]
         os.makedirs(os.path.join("./imgvinden/images/", self.dir_name), exist_ok=True)
 
+    # Loads the currnet image as a numpy array
     def image_to_np(self):
         with Image.open(self.original_image_path) as im:
             return np.asarray(im)
         
+    # inputs an numpy image, saves is and loads it.
     def use_np_image(self, image : np.ndarray, save_name : str):
         # Convert to PIL
         im = Image.fromarray(image)
@@ -62,13 +68,16 @@ class ImageVinden(QPixmap):
         self.load(image_path)
 
     def crop(self, x_range : tuple[float, float], y_range : tuple[float, float]):
+        # Loading image
         image = self.image_to_np()
 
+        # Defines the range for x and y values to create the properly shaped output
         x_values_range = range(int(x_range[0] * image.shape[0]), int(x_range[1] * image.shape[0]))
         y_values_range = range(int(y_range[0] * image.shape[1]), int(y_range[1] * image.shape[1]))
 
         out_image = np.zeros(shape = [len(list(x_values_range)), len(list(y_values_range)), 3], dtype = np.uint8)
 
+        # x and y offset
         crop_shift_x = list(x_values_range)[0]
         crop_shift_y = list(y_values_range)[0]
 
@@ -98,6 +107,7 @@ class ImageVinden(QPixmap):
     def rotate(self, rotation_degrees : int):
         rotation_rad = math.radians(rotation_degrees)
         
+        # Rotates a single pixel (x, y) position by alpha radians
         def rotate_point(x, y, alpha):
             x_prime = x*math.cos(alpha) - y*math.sin(alpha)
             y_prime = x*math.sin(alpha) + y*math.cos(alpha)
@@ -108,11 +118,12 @@ class ImageVinden(QPixmap):
         height, width, _ = image.shape
         
         # Getting the square area of the rotated image when zero padding is used
-        tl = rotate_point(0, 0, alpha = rotation_rad)
-        bl = rotate_point(height - 1, 0, alpha = rotation_rad)
-        tr = rotate_point(0, width - 1, alpha = rotation_rad)
-        br = rotate_point(height - 1, width - 1, alpha = rotation_rad)
+        tl = rotate_point(0, 0, alpha = rotation_rad) # Top left
+        bl = rotate_point(height - 1, 0, alpha = rotation_rad) # Bottom left
+        tr = rotate_point(0, width - 1, alpha = rotation_rad) # Top right
+        br = rotate_point(height - 1, width - 1, alpha = rotation_rad) # Bottom right
 
+        # Finding the max and minimum x and y values after rotation. Used to create output size
         x_min = int(min(tl[0], bl[0], tr[0], br[0]))
         x_max = int(max(tl[0], bl[0], tr[0], br[0]))
 
@@ -123,16 +134,13 @@ class ImageVinden(QPixmap):
         y_range = int(y_max - y_min) + 1
 
         rotated = np.zeros(shape = [x_range, y_range, 3], dtype=np.uint8)
-        
-        x_translation = 0
-        y_translation = 0
-
-        # TODO add bilinear interpolation?? Might be fun
 
         for x in range(x_range):
             for y in range(y_range):
+                # Points adjusted after rotation
                 x_prime, y_prime = rotate_point(x + x_min, y + y_min, alpha = - rotation_rad)
 
+                # Checking if in bounds
                 if x_prime >= height or x_prime < 0:
                     rotated[x, y, :] = 0
                     continue
@@ -156,6 +164,8 @@ class ImageVinden(QPixmap):
 
         for x in range(out_image.shape[0]):
             for y in range(out_image.shape[1]):
+                # Found integer positions to the left and right of the scaled
+                # x and y values
                 x_1 = int(float(x) / scale_factor)
                 x_2 = x_1 + 1
 
@@ -176,6 +186,7 @@ class ImageVinden(QPixmap):
                     out_image[x, y] = image[x_1 , image.shape[1] - 1, :]
                     continue
 
+                # Bilinear Interpolation
                 q_11 = image[x_1, y_1, :]
                 q_12 = image[x_1, y_2, :]
                 q_21 = image[x_2, y_1, :]
@@ -190,6 +201,7 @@ class ImageVinden(QPixmap):
 
         self.use_np_image(out_image, save_name = "scale")
 
+    # Power law gray-level mapping
     def PLGLM(self, gamma : float):
         image = self.image_to_np()
 
@@ -204,6 +216,7 @@ class ImageVinden(QPixmap):
         
         self.use_np_image(out_image, save_name = "PLGLM")
 
+    # Linear gray-level mapping
     def LGLM(self, gain : float, bias : float):
         image = self.image_to_np()
 
@@ -245,6 +258,7 @@ class ImageVinden(QPixmap):
 
         self.use_np_image(out_image, save_name = "Convolution")
 
+    # Non linear filtering
     def NLF(self, filter_type : str):
         assert filter_type in ["Minimum", "Median", "Maximum"]    
 
@@ -282,6 +296,69 @@ class ImageVinden(QPixmap):
 
         self.use_np_image(out_image, save_name = "Convolution")
 
+    def black_and_white_conversion(self):
+        image = self.image_to_np()
+
+        out_image = np.zeros_like(image, dtype = np.uint8)
+
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                out_image[x, y, :] = np.array([int(np.mean(image[x, y, :])) for _ in range(3)])
+
+        self.use_np_image(out_image, save_name = "black-and-white")
+
+    def colourblind_mode(self):
+        image = self.image_to_np()
+
+        out_image = np.zeros_like(image, dtype = np.uint8)
+
+        # Converts an RGB image to a more colourblind friendly version
+        # Conversion coefficients found from...
+        # https://github.com/skratchdot/color-blind
+        # Human-Computer Interaction Resource Network ( http://hcirn.com/ ).
+
+        def rgb_to_colorblind(rgb : np.ndarray):
+            # convert RGB to LMS (long, medium, short) color space
+            lms = [
+                17.8824 * rgb[0] + 43.5161 * rgb[1] + 4.1194 * rgb[2],
+                3.4557 * rgb[0] + 27.1554 * rgb[1] + 3.8671 * rgb[2],
+                0.02996 * rgb[0] + 0.18431 * rgb[1] + 1.467 * rgb[2]
+            ]
+            
+            # simulate protanopia color blindness
+            protanopia_rgb = [
+                0.0809444479 * lms[0] - 0.130504409 * lms[1] + 0.116721066 * lms[2],
+                -0.0102485335 * lms[0] + 0.0540193266 * lms[1] + -0.113614708 * lms[2],
+                -0.000365296938 * lms[0] - 0.00412161469 * lms[1] + 1.69317345 * lms[2]
+            ]
+            protanopia_rgb = [
+                255 if x > 255 else 0 if x < 0 else x for x in protanopia_rgb
+            ]
+            
+            # simulate deuteranopia color blindness
+            deuteranopia_rgb = [
+                0.0492585143 * lms[0] - 0.0578085241 * lms[1] + 0.00344571134 * lms[2],
+                -0.00341000398 * lms[0] + 0.0161628756 * lms[1] + -0.0283015 * lms[2],
+                0.000475202209 * lms[0] - 0.000742200683 * lms[1] + 0.467247201 * lms[2]
+            ]
+            deuteranopia_rgb = [
+                255 if x > 255 else 0 if x < 0 else x for x in deuteranopia_rgb
+            ]
+            
+            # determine which simulated color blindness is closer to the original color
+            protanopia_diff = sum([(protanopia_rgb[i] - rgb[i]) ** 2 for i in range(3)])
+            deuteranopia_diff = sum([(deuteranopia_rgb[i] - rgb[i]) ** 2 for i in range(3)])
+            if protanopia_diff < deuteranopia_diff:
+                return np.array(protanopia_rgb, dtype = np.uint8)
+            else:
+                return np.array(deuteranopia_rgb, dtype = np.uint8)
+        
+        for x in range(image.shape[0]):
+            for y in range(image.shape[1]):
+                out_image[x, y, :] = rgb_to_colorblind(image[x, y, :])
+
+        self.use_np_image(out_image, save_name = "colourblind-mode")
+
     def histogram_equalization(self, histogram : list):
         image = self.image_to_np()
 
@@ -289,6 +366,7 @@ class ImageVinden(QPixmap):
 
         for x in range(image.shape[0]):
             for y in range(image.shape[1]):
+                # Each RGB value is histogram equalized
                 new_col_values = np.array([255 * histogram[val] for val in image[x, y, :]], dtype = np.uint8)
                 #new_col_values = np.array([255 * histogram[int(np.mean(image[x, y]))]] * 3, dtype=np.uint8)
                 out_image[x, y, :] = new_col_values
@@ -382,9 +460,17 @@ class ImgVindenGUI(QMainWindow):
         self.NLF_button.clicked.connect(self.NLF_action)
         self.button_grid.addWidget(self.NLF_button, 2, 2)
 
+        self.bw_button = QPushButton("To Black and White", self)
+        self.bw_button.clicked.connect(self.bw_action)
+        self.button_grid.addWidget(self.bw_button, 3, 0)
+
         self.histogram_button = QPushButton("Histogram", self)
         self.histogram_button.clicked.connect(self.histogram_action)
         self.button_grid.addWidget(self.histogram_button, 3, 1)
+
+        self.cb_button = QPushButton("Colourblind Mode", self)
+        self.cb_button.clicked.connect(self.colour_blind_action)
+        self.button_grid.addWidget(self.cb_button, 3, 2)
 
         self.master_grid.addLayout(self.image_grid, 0, 0)
         self.master_grid.addLayout(self.button_grid, 1, 0)
@@ -401,6 +487,9 @@ class ImgVindenGUI(QMainWindow):
     ##################
     # Button Actions #
     ##################
+
+    # These functions bring up the dialog boxes to accept input from user,
+    # and then calls the ImageVinden to preform the pixel-wise image task
 
     @pyqtSlot()
     def swap_image_action(self):
@@ -490,6 +579,8 @@ class ImgVindenGUI(QMainWindow):
         if ok:
             try:
                 scale_factor = float(scale_factor)
+                if scale_factor <= 0.0 or scale_factor > 3.0:
+                    raise ValueError
                 self.output_pixmap.scale(scale_factor)
                 self.output_label.setPixmap(self.output_pixmap)
             except ValueError:
@@ -604,8 +695,18 @@ class ImgVindenGUI(QMainWindow):
         dg.exec_()
 
     @pyqtSlot()
-    def histogram_action(self):
+    def bw_action(self):
+        self.output_pixmap.black_and_white_conversion()
+        self.output_label.setPixmap(self.output_pixmap)
 
+    @pyqtSlot()
+    def colour_blind_action(self):
+        self.output_pixmap.colourblind_mode()
+        self.output_label.setPixmap(self.output_pixmap)
+
+    # Does histogram equalization on an image
+    @pyqtSlot()
+    def histogram_action(self):
         def activate_hist(values):
             histogram = values["histogram"]
             self.output_pixmap.histogram_equalization(histogram)

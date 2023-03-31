@@ -88,6 +88,7 @@ class CropDialog(QDialog):
         self.accepted.emit(values)
         self.accept()
 
+# Non linear filtering dialog
 class NLFDialog(QDialog):
     accepted = pyqtSignal(dict)
 
@@ -96,6 +97,7 @@ class NLFDialog(QDialog):
 
         self.title_label = QLabel("Selet type of non-linear filtering")
 
+        # Buttons
         self.minimum = QPushButton("Minimum")
         self.minimum.clicked.connect(self.min_action)
 
@@ -105,6 +107,7 @@ class NLFDialog(QDialog):
         self.maximum = QPushButton("Maximum")
         self.maximum.clicked.connect(self.max_action)
 
+        # Adding to forms
         form = QFormLayout(self)
         form.addRow(self.title_label)
         form.addRow(self.minimum)
@@ -124,6 +127,7 @@ class NLFDialog(QDialog):
         self.response = "Maximum"
         self.submit()
 
+    # Returning values
     def submit(self):
         self.close()
         self.accepted.emit({"response": self.response})
@@ -188,6 +192,14 @@ class HistogramDialog(QDialog):
         # show all the widgets
         self.show()
 
+    ######################
+    # PLOTTING FUNCTIONS #
+    ######################
+
+    # These create matplotlib histograms
+
+    # Returns the histogram values, so the imagevinden can preform
+    # histogram equalization
     @pyqtSlot()
     def equalization_action(self):
         hist_list = [0] * 256
@@ -305,7 +317,7 @@ class HistogramDialog(QDialog):
         self.hist_label.setPixmap(self.hist_pixmap)
 
     @pyqtSlot()
-    def histogram_action(self) -> np.ndarray:
+    def histogram_action(self):
         hist_list = [0] * 256
 
         vals, counts = np.unique(self.image, return_counts = True)
